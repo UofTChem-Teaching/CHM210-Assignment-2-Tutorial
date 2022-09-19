@@ -1,0 +1,292 @@
+---
+title: "CHM210 R Tutorial_2 2022"
+author: "Matthew G Davis"
+date: '2022-07-20'
+output: word_document
+
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this tutorial, we will work through a workflow for importing atmospheric data, processing it, and plotting some figures using `ggplot()`. As was noted in the first assignment, the [*R for Environmental Chemistry*](https://davidrosshall.github.io/R4EnvChem/) textbook is available if additional information is needed on the basic functioning of the R programming language.
+
+In this tutorial we will be exploring the chemistry of air quality by looking at the relationship between two forms of a common pollutants: gas-phase ammonia ($NH_3$) and particulate ammonium ($NH_4$). 
+
+Firstly, for this tutorial, we are going to make use of a popular package for data analysis in R, `tidyverse`. Packages in R must be installed (only the first time), and loaded prior to use. Rstudio may provide a prompt for you to install any of the packages needed, but you can run the following code to install those packages if it doesn't.
+
+
+```{r install-tidy, eval = FALSE}
+install.packages("tidyverse")
+install.packages("zoo")
+install.packages("ggpmisc")
+
+```
+
+
+## Importing the required packages 
+
+Once you have those packages installed, you can simply load them into your R session using the `library()` function, as shown below.
+
+```{r load-tidy, message = FALSE, warning = FALSE}
+library('tidyverse')
+library('ggpmisc')
+library('zoo')
+```
+
+It isn't really an issue for this tutorial as we're only loading three packages, but my preferred method for loading packages is using the `lapply()` function, as shown below.
+
+```{r load, message=FALSE, warning=FALSE}
+
+x <- c("tidyverse", "zoo", "ggpmisc")
+
+lapply(x, library, character.only = TRUE)
+```
+
+As you can see, with only two packages to import both code segments require two lines of code, but if you needed to import more than two, this would be faster. 
+
+# Part A: Importing and formatting data sets
+
+## Importing the data sets
+
+The instructions in this document assume that students are working in a Jupyter notebook folder dedicated to this tutorial, as was done in assignment 1.
+
+After you have loaded the assignment file into Jupyter as instructed on Quercus, upload your `.csv` files into that directory using the RStudio GUI.
+
+As in assignment 1, we use `read.csv()` to import our data set.
+
+```{r import-data, message = FALSE}
+df <- read.csv("Particulate and Gas Phase ammonia.csv", sep = ",")
+```
+
+## Format date and time column
+
+Now that we have our data sets loaded, let's take a look at some of the data. You can use the function `head()` to view the first few rows of your data set.
+
+```{r view-data}
+head(df)
+```
+
+You should observe 5 columns, the time, the $NH_3$ and $NH_4$ concentrations, as well as the sample location. You may also notice that while the latter 4 columns read `<dbl>` (i.e. numerical), the Time column reads `<chr>`, or "character". It is very common that when you import a dataset with a time variable, that additional formatting is needed for R to correctly interpret the date. 
+
+A base R function that we can use to format date objects is `as.POSIXct()`. To call this function, we will give `df$Time` as our first argument, and `format = "%Y-%m-%d %H:%M:%S` as our second argument.
+
+```{r format-date}
+df$date <- as.POSIXct(df$Time, format = "%Y-%m-%d %H:%M")
+```
+
+Note that while it is possible to overwrite the original date column by writing, `df$Time <- [variable]` instead of creating a new column `df$date`, it is often good practice to not replace a column with an operation on itself, because re-running the code would then cause errors. 
+
+Let's take another look at our data now that we've reformatted it.
+
+```{r view-time}
+head(df)
+```
+
+You can see that while we have retained the data in the `Time` column, we have created a new column `date` that is now formatted as date and time data. Let's proceed by removing any erroneous or null readings from the dataset.
+
+## Remove outliers 
+
+You may be familiar from CHM135 that governmental datasets containing outliers, erroneous data, or null values often code those values with `NA` or -999, or other similar methods. These values occur when data is not collected by the instrument due to error, or when data is rejected by the instrument due to quality control issues. You will need to remove these error-coded values before proceeding with the rest of the assignment. 
+
+(Note that while other methods can be used that insert characters into the `NH3` or `NH4` columns, those would cause R to re-interpret the columns as `character` rather than `int`, and since both columns are `int`, we know these are the only ways error-coded data could be present)
+
+As different datasets may code their erroneous data differently, it may be necessary to investigate briefly the dataset to determine what method of removing the error-coded data is appropriate. Two quick methods to check are shown below
+
+```{r id-outliers}
+sum(is.na(df))
+
+min(df$NH3, na.rm = TRUE)
+
+min(df$NH4, na.rm = TRUE)
+```
+`sum(is.na(df))` calculates the *sum* of the `NA` values in the data-frame. If the sum is 0, then there are no `NA` values, if it is greater than 0, then there are `NA` values to remove. Using `min()` for data columns is a fast way to determine if there are values present coded as -999 or -900, which are common numerical methods for designating error-coded data. As you can see, our data contains both NA-coded and -999 coded data.
+
+`subset()` is a base R function that can be used to remove rows from a dataframe that meet some criteria. Unwanted rows can be removed as shown below. It isn't recommended to use comparators with `NA`, so we will use the `na.omit()` function instead to remove our `NA` values.
+
+```{r rmv-outliers}
+df <- subset(df,NH3!=-999)
+
+df <- subset(df,NH4!=-999)
+
+df <- na.omit(df)
+```
+
+Note that `!=` is used for "does not equal", other comparators that can be used to subset data include: `==` ("is equal to"), `>=` and `<=` ("greater than" and "less than"). Note that multiple tests can be combined using the `&` (and) and `|` (or) operators. For example, if you wanted to exclude data from between 2021-05-11 and 2021-06-01, you could use the code below.
+
+```{r}
+eg.df <- subset(df,date<"2021-05-11 23:59:59" | date>"2021-06-01 00:00:00")
+```
+
+Note that because subset doesn't allow you to "undo" a subset operation, it is best to not overwrite your named variable with the product of the subset operation, unless you are very sure you won't need the original again. Since we won't want the error-coded data, we overwrote the `df` variable, because we do want to keep the rest of our data, we created a new variable for this demonstration.
+
+## Generate total NHx data
+
+Because $NH_3$ and $NH_4$ can interconvert, and can have similar environmental impact, it can be useful sometimes to combine the two variables.
+
+To calculate the $NH_X$ concentration for each time point, you will need to add the $NH_4$ concentration and $NH_3$ concentration for each row.We can do this the same way as we did when adding a new date column above.
+
+```{r add-NHx-baser}
+df$NHex <- df$NH4+df$NH3
+head(df)
+```
+
+However, another approach you can use is making use of the `mutate()` function from `tidyverse`, which has a different syntax that some users find easier to use.
+
+```{r add-NHx-tidy}
+df <- mutate(df, NHx = NH4 + NH3)
+head(df)
+```
+
+If you browse the dataframe you have created, you will see that the output of both approaches is identical, and students are encouraged to use whichever they prefer.
+
+
+# Part B: Plotting a time series
+
+Our data is now ready to be plotted as a time series. While in assignment 1, we used the base R `plot()` function, in this tutorial we will use the function `ggplot()` from `ggplot2` to create our time series. (NB that `ggplot2` is also included with `tidyverse`.) If you are interested in additional examples using ggplot2, Chapter 11 of the [*R for Environmental Chemistry*](https://davidrosshall.github.io/R4EnvChem/) has more examples. 
+
+In ggplot, you can build up a figure by combining multiple functions together, as shown in the example below. Inside of the function you will need to specify a few arguments: the data set you want to plot from (`df`), and the aesthetic mapping (`aes()`). If you want to plot multiple lines on the same graph, often one will specify the shared independent variable (e.g. the date) in the main `aes()` call, and then specify the dependent variable for each line in the `geom_line()` `aes()` call.
+
+```{r wplot}
+wplot <- ggplot(data = df, aes(x = date))+
+  geom_line(aes(y = NH3), color = "blue", size =0.1)+
+  ylab("Pollutant concentration (ppb)")+
+  xlab("Date")+
+  ggtitle("Concentration of Gas and particle phase ammonia for Q2, 2021")+
+  theme_bw()
+
+print(wplot)
+```
+
+Note that similarly to in Assignment 1, you can specify the aesthetics of your plotted lines using `color` and `size`, and add labels using `ylab()` and `xlab()`, though ggplot uses `ggtitle()` as the argument used to specify the title. `theme_bw()` is an argument used to adjust the overall aesthetics of the figure, e.g. the background, etc. You can experiment with this (typing `theme_` into the console will display some auto-corrected options that are available as themes) to see if there is a theme that you like. 
+
+The code above only plots one of your three variables, how would you modify the code to plot the lines for the additional two variables? Note that unlike the `plot()` function where you have to recreate the plot entirely if you want to add something, it is simple to add additional aesthetics to a ggplot object. An example is shown below--complete the code block below by adding the Odd oxygen concentration to the graph as a red line. 
+
+```{r}
+wplot2 <- wplot+geom_line(aes(y = NH4), color = "green", size = 0.1)+
+  geom_line(aes(y = NHx), color = "red", size = 0.1) ##for students to add
+
+print(wplot2)
+```
+
+Beautiful! Our time series is now complete. You can export your plot as an image (`.jpeg`) file using the **Export** button in the Plots window of RStudio. Click *Export*->*Save as Image*. A window will pop up which will allow you to specify the file type (make sure to select `.jpeg`), file location, file name, and image size you want to save.
+
+Let's move on and try calculating some summary statistics for our air quality data in R. 
+
+# Part C: Summary Statistics 
+
+## Calculate mean and standard deviation
+
+Let's begin with calculating the mean and standard deviation. Now, as a matter of basic functionality in R, one can calculate summary statistics with mathematical operations as one would do by hand, for example:
+```{r}
+NH3mean <- sum(df$NH3)/length(df$NH3)
+print(NH3mean)
+```
+But, of course, it is unnecessary to calculate summary statistics manually, as R has built in functions, such as `mean()` and `sd()` that you can use instead, just as you would in excel.
+
+```{r}
+mean(df$NH3)
+```
+Standard deviation is calculated in the same way.
+
+```{r}
+sd(df$NH3)
+```
+
+## Calculate relative standard deviation
+
+One can combine the R functions for mean and standard deviation to calculate the *relative standard deviation*, another useful summary statistic, which is calculated as shown below. 
+
+$$\%RSD = \frac{\sigma}{\bar x}*100\%$$
+
+This can be done easily in R.
+
+```{r}
+xbar <- mean(df$NH3)
+sigma <- sd(df$NH3)
+
+(sigma/xbar)*100
+```
+
+You can calculate the RSD for $NH_4$ and $NH_X$ using the same code, as long as you replace the `NH3` portions of the previous code with the name of the pollutant you want to examine.
+
+Now, you may find it tedious to repeat the above three code blocks for every summary statistic you want to calculate, but one of the main points of a programming language like R is to try and minimize this sort of manual iteration of simple calculations. Fortunately, this can also be avoided by defining a new function in R, as shown below.
+
+```{r}
+rsd <- function(pollutantarray){
+  ##The argument in this function should be a numerical vector which the relative standard deviation will be calculated on.
+  xbar <- mean(pollutantarray)
+  sigma <- sd(pollutantarray)
+  relsd <- 100*sigma/xbar
+  
+  dframe <- cbind.data.frame(xbar, sigma, relsd)
+  return(dframe)
+}
+
+rsd(df$NH3)
+rsd(df$NH4)
+rsd(df$NHx)
+```
+By defining a new function that combines the `mean()`, `sd()`, and rsd calculations, we can then simply call our new `rsd()` function on each pollutant we're interested in, rather than needing to call each of those functions separately multiple times. 
+
+
+## Air Quality Regulation
+
+In most jurisdictions, ammonia and particle phase ammonium are not specifically regulated (though $PM_2_5$ *is* regulated), but for practice we can examine our data set as if they were.
+
+### Determine 1 hour maximum
+
+In order to determine whether our gas-phase $NH_3$ values might exceed an air quality standard, we can simply use the `max()` function on the `NH3` column, as shown below.
+
+```{r hourly-NH3}
+max(df$NH3)
+```
+
+
+
+### Determine the 24-hour moving average
+
+While gas-phase pollutants often are regulated with hourly concentration maximums, fine particulate matter is usually regulated on the basis of 24-hour averaging periods. We can calculate a 24-hour moving average using the function `rollmean` from the package `zoo`. Inside of the function, we need to specify the column of `df` which we are trying to analyze (`df$NH4`), and the number of data points you want to include in each calculation of the mean. Since we are trying to calculate the 24-hour moving average, `k = 23` as we want the average of each data point and the subsequent 23 data points. A sample calculation is shown below.
+
+```{r calc-ma}
+rolledNH4 <- rollmean(df$NH4, 23)
+```
+
+Now we have a vector of all of the 24-hour average NH4 concentrations. In order to determine whether our 24-hour concentrations exceed an air quality standard, we would simply run the `max()` function on the variable we assigned in the previous code-block. Note the `na.rm = TRUE` inside of `max()`; this argument is required to remove `NA` values from the 8-hour concentrations. Without it, you may get `NA` as the output of `max()`.
+
+```{r max-ma}
+max(rolledNH4, na.rm = TRUE)
+```
+
+# Part D: Plotting the correlation between $NH_4$ and $NH_3$
+
+Correlation plots help us to better visualize the relationship between two variables. 
+
+Let's build a correlation plot for $NH_4$ and $NH_3$, to give us a better understanding of the chemistry that contributes to air quality. We will use $NH_4$ as our x-variable, and $NH_3$ as our y-variable. 
+
+To create a correlation plot, we will use `ggplot()` again. However, this time we will use `geom_point()` instead of `geom_line()`, as we want a scatter plot rather than a line plot. Recall that we need to specify the data set (`df`) and aesthetic mapping for the plot (`aes(x,y)`). A sample plot is generated below. 
+
+```{r corr-plot}
+corr <- ggplot(data = df, aes(x = NH4, y = NH3)) + geom_point()+theme_bw()
+corr
+```
+
+In order to grasp the strength of the correlation between $NH_4$ and $NH_3$, let's add a linear trend line to our correlation plot. We will do this by adding `+ geom_smooth()` to our previous plot, and will specify that we want a linear trend line by entering `method = "lm"` inside the geom call. We will also specify that our `formula = y ~ x` and `se = FALSE`. This is performed below.
+
+```{r corr-plot-line}
+corr <- corr + geom_smooth(method = "lm", formula = y ~ x, se = FALSE)
+corr
+```
+
+You can also add the equation of the trend line and $R^2$ value to the plot by adding the following code using the `stat_poly_eq()` function from ``ggpmisc` to your correlation plot. It is recommended that you simply copy-paste this portion of code into your scripts; do not alter any of the inputs or you will likely get an error.
+
+```{r add-equation}
+corr + stat_poly_eq(aes(label =  paste(stat(eq.label), stat(rr.label), sep = "*\", \"*")),
+               formula = y ~ x, rr.digits = 4 , parse = TRUE, label.y = 0.5, size = 3)
+```
+
+You can export your plot as an image (`.jpeg`) file using the **Export** button in the Plots window of RStudio. Click *Export*->*Save as Image*. A window will pop up which will allow you to specify the file type (make sure to select `.jpeg`), file location, file name, and image size you want to save.
